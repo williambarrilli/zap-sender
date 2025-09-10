@@ -15,6 +15,7 @@ type ContactRow = Record<string, string | undefined>;
 interface Contact {
   name: string;
   phone: string; // em formato internacional: +55XXXXXXXXXXX
+  horario: string;
 }
 
 const SEND_DELAY_MS = Number(process.env.SEND_DELAY_MS || 2000);
@@ -23,9 +24,8 @@ const HEADLESS = (process.env.HEADLESS ?? "true").toLowerCase() !== "false";
 const MESSAGE =
   process.env.MESSAGE ||
   "Mensagem padrão: configure a variável MESSAGE no .env";
-
-// Mensagem única para todos
-const renderMessage = (name: string): string => MESSAGE.replace("{name}", name);
+const renderMessage = (name: string, horario: string): string =>
+  MESSAGE.replace("{name}", name).replace("{horario}", horario);
 
 // ===== utils =====
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
@@ -84,6 +84,7 @@ async function loadContacts(csvPath: string): Promise<Contact[]> {
 
   for (const row of rows) {
     const name = row["name"] ?? "";
+    const horario = row["horario"] ?? "";
 
     const whatsapp =
       row["Whatsapp"] ??
@@ -91,6 +92,7 @@ async function loadContacts(csvPath: string): Promise<Contact[]> {
       row["whatsapp"] ??
       row["Phone"] ??
       row["number"] ??
+      row["phone"] ??
       "";
 
     const phone = normalizePhone(whatsapp);
@@ -102,12 +104,20 @@ async function loadContacts(csvPath: string): Promise<Contact[]> {
       );
       continue;
     }
+    if (!horario) {
+      ignoradosHorario++;
+      console.warn(
+        `⚠️  Ignorando sem horário válido: ${name} | raw: ${horario}`
+      );
+      continue;
+    }
 
     // Remove duplicados pelo número de telefone
     if (!contactsMap.has(phone)) {
       contactsMap.set(phone, {
         name: String(name || "").trim(),
         phone,
+        horario: String(horario || "").trim(),
       });
     }
   }
@@ -120,7 +130,6 @@ async function loadContacts(csvPath: string): Promise<Contact[]> {
   }
   return contacts;
 }
-
 async function main() {
   const client = new Client({
     authStrategy: new LocalAuth({ clientId: "zap-sender" }),
@@ -151,7 +160,7 @@ async function main() {
     let failed = 0;
 
     for (const contact of contacts) {
-      const message = renderMessage(contact.name);
+      const message = renderMessage(contact.name, contact.horario);
       const rawNumber = contact.phone.replace(/\D/g, "");
       const numberId = await client.getNumberId(rawNumber);
 
@@ -162,7 +171,9 @@ async function main() {
 
       try {
         await client.sendMessage(numberId._serialized, message);
-        console.log(`✅ Enviado para ${contact.name} (${contact.phone})`);
+        console.log(
+          `✅ Enviado para ${contact.name} (${contact.phone}) - ${contact.horario}`
+        );
         sent++;
       } catch (err: any) {
         console.error(`❌ Falha para ${contact.name}:`, err?.message ?? err);
@@ -178,7 +189,7 @@ async function main() {
   await client.initialize();
 }
 
-if (require.main === module) {
+if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((e) => {
     console.error("Erro fatal:", e);
     process.exit(1);
